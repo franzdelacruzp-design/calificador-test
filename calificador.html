@@ -32,7 +32,7 @@
 </head>
 <body>
 <div class="panel" id="panelConfig">
-  <h2>Lector de hojas (prueba)</h2>
+  <h2>Lector de hojas (Sin Lag)</h2>
   <label class="campo">PIN de creador</label>
   <input id="pin" type="password">
   <button onclick="cargarLista()">Cargar lista de exámenes</button>
@@ -54,29 +54,37 @@
   <h4>Respuestas dudosas o dobles</h4>
   <div id="dudas"></div>
 </div>
+
 <video id="video" playsinline muted style="display:none"></video>
 
 <script>
-  const URL_API = 'https://script.google.com/macros/s/AKfycbyzwurBcWvUmHXyS70klQhuny8y-9dHyslQHJkeZP90ZfdZpMM8OkMfWz4yamMuymPN7Q/exec';
+  const URL_API = 'https://script.google.com/macros/s/AKfycbyzwurBcWvUmHXyS70klQhuny8y-9dHyslQHJkeZP90ZfdZpMM8OkMfWz4yamMuymPN7Q/exec'; // <-- NO OLVIDES PONER TU URL
   const LETRAS = ['A', 'B', 'C', 'D', 'E', 'F'];
-  const LADO_MAX = 1280;
+  const LADO_MAX = 800; // Reducido para acelerar el escaneo sin perder precisión
 
   let P = null;
   let activo = false;
   let congelado = false;
   let historial = [];
+  let worker = new Worker('lector.js'); // Instanciamos el Web Worker
+  let procesando = false;
 
   const video = document.getElementById('video');
   const lienzo = document.getElementById('lienzo');
   const ctx = lienzo.getContext('2d', { willReadFrequently: true });
 
   function $(id) { return document.getElementById(id); }
-
   function msg(t, error) {
     const m = $('mensaje');
     m.textContent = t;
     m.style.color = error ? 'red' : 'green';
   }
+
+  // Cuando el worker termina de pensar, nos manda los resultados
+  worker.onmessage = function(e) {
+    mostrar(e.data.r);
+    procesando = false; 
+  };
 
   async function cargarLista() {
     const pin = $('pin').value;
@@ -114,9 +122,15 @@
       msg('FALLÓ: ' + err.name + ' - ' + err.message, true);
       return;
     }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        video: { 
+          facingMode: { ideal: 'environment' }, 
+          width: { ideal: 1920 }, 
+          height: { ideal: 1080 },
+          focusMode: { ideal: "continuous" } // Forzamos al celular a enfocar contínuamente
+        },
         audio: false
       });
       video.srcObject = stream;
@@ -125,10 +139,11 @@
       msg('No se pudo abrir la cámara: ' + err.name + ' - ' + err.message, true);
       return;
     }
+
     $('panelConfig').style.display = 'none';
     $('visor').style.display = 'block';
     activo = true;
-    ciclo();
+    ciclo(); // Iniciamos el bucle a 60fps
   }
 
   function congelar() {
@@ -138,22 +153,29 @@
 
   function ciclo() {
     if (!activo) return;
+    
     if (!congelado && video.videoWidth) {
       const k = LADO_MAX / Math.max(video.videoWidth, video.videoHeight);
       const w = Math.round(video.videoWidth * k);
       const h = Math.round(video.videoHeight * k);
-      if (lienzo.width !== w || lienzo.height !== h) { lienzo.width = w; lienzo.height = h; }
-      ctx.drawImage(video, 0, 0, w, h);
-      const img = ctx.getImageData(0, 0, w, h);
-      let r;
-      try {
-        r = LECTOR.leer(img.data, w, h, P);
-      } catch (err) {
-        r = { ok: false, motivo: 'Error de lectura: ' + err.message };
+      
+      if (lienzo.width !== w || lienzo.height !== h) { 
+        lienzo.width = w; lienzo.height = h; 
       }
-      mostrar(r);
+      
+      // Dibujamos el video en el lienzo (esto ocurre a 60 fps super fluido)
+      ctx.drawImage(video, 0, 0, w, h);
+      
+      // Si el worker está libre, le mandamos una copia de este fotograma para analizar
+      if (!procesando) {
+        procesando = true;
+        const img = ctx.getImageData(0, 0, w, h);
+        // Usamos buffers transferibles para que la memoria se mueva al instante (0 lag)
+        worker.postMessage({ accion: 'leer', rgba: img.data, w: w, h: h, P: P }, [img.data.buffer]);
+      }
     }
-    setTimeout(ciclo, 150);
+    // requestAnimationFrame es el método correcto para no trabar el navegador
+    requestAnimationFrame(ciclo); 
   }
 
   function dibujarCuadro(q, color) {
@@ -191,11 +213,11 @@
     const dni = $('dni');
     dni.textContent = 'DNI: ' + r.dni.texto;
     dni.style.color = r.dni.completo ? '#2e7d32' : '#c62828';
-    $('aviso').textContent = (r.dni.completo ? '' : 'DNI incompleto o con doble marca: revisar. ') +
-                             (r.contraste < 0.5 ? 'Poca luz o contraste bajo.' : '');
+    $('aviso').textContent = (r.dni.completo ? '' : 'DNI incompleto o con doble marca: revisar. ') + 
+                             (r.contraste < 0.4 ? 'Poca luz o contraste bajo.' : '');
     const s = r.resumen;
-    $('resumen').textContent = 'Con respuesta: ' + s.ok + ' · En blanco: ' + s.blanco +
-                               ' · Dobles: ' + s.doble + ' · Dudosas: ' + s.dudosa +
+    $('resumen').textContent = 'Con respuesta: ' + s.ok + ' · En blanco: ' + s.blanco + 
+                               ' · Dobles: ' + s.doble + ' · Dudosas: ' + s.dudosa + 
                                ' · Escala: ' + r.pxmm.toFixed(1) + ' px/mm';
     let html = '';
     let dudas = '';
