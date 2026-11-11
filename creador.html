@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel del creador</title>
+<style>
+  body { font-family: sans-serif; padding: 12px; max-width: 700px; margin: auto; }
+  .campo { display: block; margin-top: 10px; font-weight: bold; }
+  input, select { font-size: 16px; padding: 8px; width: 100%; box-sizing: border-box; }
+  button { font-size: 17px; padding: 12px; margin-top: 12px; }
+  .fila { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #ddd; flex-wrap: wrap; }
+  .num { width: 34px; font-weight: bold; }
+  .fila select { width: 56px; padding: 4px; }
+  .op { display: flex; align-items: center; gap: 2px; margin-right: 6px; }
+  .op input { width: 22px; height: 22px; }
+  #estado { margin-top: 12px; font-weight: bold; }
+</style>
+</head>
+<body>
+  <h2>Panel del creador</h2>
+  <label class="campo">PIN de creador</label>
+  <input id="pin" type="password">
+  <label class="campo">Nombre del examen</label>
+  <input id="nombre">
+  <label class="campo">Número de preguntas (1 a 100)</label>
+  <input id="np" type="number" min="1" max="100" value="20">
+  <label class="campo">Alternativas por defecto (2 a 6)</label>
+  <input id="alt" type="number" min="2" max="6" value="5">
+  <button onclick="crearTabla()">Crear tabla de clave</button>
+
+  <div id="tabla"></div>
+  <div id="estado"></div>
+  <button id="btnGuardar" onclick="guardar()" style="display:none">Guardar examen</button>
+  <br>
+  <button onclick="listar()">Ver exámenes guardados</button>
+  <pre id="lista"></pre>
+
+<script>
+  const URL_API = 'https://script.google.com/macros/s/AKfycbyzwurBcWvUmHXyS70klQhuny8y-9dHyslQHJkeZP90ZfdZpMM8OkMfWz4yamMuymPN7Q/exec';
+  const LETRAS = ['A', 'B', 'C', 'D', 'E', 'F'];
+  let alternativas = [];
+  let clave = [];
+
+  function estado(msg, error) {
+    const e = document.getElementById('estado');
+    e.textContent = msg;
+    e.style.color = error ? 'red' : 'green';
+  }
+
+  function crearTabla() {
+    const n = parseInt(document.getElementById('np').value);
+    const a = parseInt(document.getElementById('alt').value);
+    if (!(n >= 1 && n <= 100) || !(a >= 2 && a <= 6)) {
+      estado('Revisa: preguntas de 1 a 100 y alternativas de 2 a 6', true);
+      return;
+    }
+    alternativas = new Array(n).fill(a);
+    clave = new Array(n).fill(null);
+    dibujar();
+  }
+
+  function dibujar() {
+    const cont = document.getElementById('tabla');
+    cont.innerHTML = '';
+    alternativas.forEach((a, i) => {
+      const fila = document.createElement('div');
+      fila.className = 'fila';
+      let html = '<span class="num">' + (i + 1) + '.</span>';
+      html += '<select onchange="cambiarAlt(' + i + ', this.value)">';
+      for (let k = 2; k <= 6; k++) {
+        html += '<option value="' + k + '"' + (k === a ? ' selected' : '') + '>' + k + '</option>';
+      }
+      html += '</select>';
+      for (let j = 0; j < a; j++) {
+        html += '<label class="op"><input type="radio" name="p' + i + '"' +
+                (clave[i] === j ? ' checked' : '') +
+                ' onchange="marcar(' + i + ',' + j + ')">' + LETRAS[j] + '</label>';
+      }
+      fila.innerHTML = html;
+      cont.appendChild(fila);
+    });
+    actualizar();
+  }
+
+  function cambiarAlt(i, v) {
+    alternativas[i] = parseInt(v);
+    if (clave[i] !== null && clave[i] >= alternativas[i]) clave[i] = null;
+    dibujar();
+  }
+
+  function marcar(i, j) {
+    clave[i] = j;
+    actualizar();
+  }
+
+  function actualizar() {
+    const n = clave.length;
+    const marcadas = clave.filter(c => c !== null).length;
+    const btn = document.getElementById('btnGuardar');
+    btn.style.display = n > 0 ? 'inline-block' : 'none';
+    btn.disabled = marcadas < n;
+    estado('Clave marcada: ' + marcadas + ' de ' + n, marcadas < n);
+  }
+
+  async function guardar() {
+    const nombre = document.getElementById('nombre').value.trim();
+    const pin = document.getElementById('pin').value;
+    if (!nombre) { estado('Escribe el nombre del examen', true); return; }
+    if (!pin) { estado('Escribe el PIN', true); return; }
+    estado('Guardando...');
+    try {
+      const r = await fetch(URL_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ accion: 'guardarExamen', pin: pin, nombre: nombre, alternativas: alternativas, clave: clave })
+      });
+      const d = await r.json();
+      if (d.ok) estado('GUARDADO. ID del examen: ' + d.id);
+      else estado('ERROR: ' + d.error, true);
+    } catch (err) {
+      estado('FALLÓ: ' + err.name + ' - ' + err.message, true);
+    }
+  }
+
+  async function listar() {
+    const pin = document.getElementById('pin').value;
+    const l = document.getElementById('lista');
+    l.textContent = 'Leyendo...';
+    try {
+      const r = await fetch(URL_API + '?pin=' + encodeURIComponent(pin));
+      const d = await r.json();
+      if (!d.ok) { l.textContent = 'ERROR: ' + d.error; return; }
+      l.textContent = d.examenes.length === 0 ? 'No hay exámenes guardados' :
+        d.examenes.map(x => x.id + ' | ' + x.nombre + ' | ' + x.preguntas + ' preguntas').join('\n');
+    } catch (err) {
+      l.textContent = 'FALLÓ: ' + err.name + ' - ' + err.message;
+    }
+  }
+</script>
+</body>
+</html>
