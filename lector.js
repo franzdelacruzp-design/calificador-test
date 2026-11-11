@@ -7,7 +7,7 @@
   var RATIO_ESPERADO = 273 / 186;  
   var OFFS = (function () {
     var a = [];
-    for (var i = -2; i <= 2; i++) for (var j = -2; j <= 2; j++) a.push([i * 0.6, j * 0.6]);
+    for (var i = -2; i <= 2; i++) for (var j = -2; j <= 2; j++) a.push([i * 0.85, j * 0.85]);
     return a;
   })();
 
