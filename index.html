@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prueba cámara</title>
+</head>
+<body style="font-family:sans-serif;padding:12px">
+  <h3>Prueba de cámara (GitHub Pages)</h3>
+  <button onclick="probar()" style="font-size:18px;padding:12px">Probar cámara</button>
+  <p id="estado">Aún no probado</p>
+  <video id="v" autoplay playsinline muted style="width:100%;margin-top:10px"></video>
+  <script>
+    async function probar() {
+      const e = document.getElementById('estado');
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' }
+        });
+        document.getElementById('v').srcObject = s;
+        e.textContent = 'FUNCIONA: la cámara abrió';
+      } catch (err) {
+        e.textContent = 'FALLÓ: ' + err.name + ' - ' + err.message;
+      }
+    }
+  </script>
+</body>
+</html>
