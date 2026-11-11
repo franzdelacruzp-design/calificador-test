@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hoja de respuestas</title>
+<style>
+  html, body { margin: 0; font-family: sans-serif; }
+  .panel { padding: 12px; max-width: 700px; margin: auto; }
+  .campo { display: block; margin-top: 10px; font-weight: bold; }
+  input, select { font-size: 16px; padding: 8px; width: 100%; box-sizing: border-box; }
+  button { font-size: 17px; padding: 12px; margin-top: 12px; }
+  #mensaje { margin-top: 10px; font-weight: bold; }
+  #pagina { width: 210mm; height: 296.5mm; overflow: hidden; background: white; margin: 0 auto; }
+  #pagina svg { display: block; width: 210mm; height: 297mm; }
+  @page { size: A4; margin: 0; }
+  @media print { .panel { display: none; } }
+</style>
+<script src="layout.js"></script>
+</head>
+<body>
+<div class="panel">
+  <h2>Generar hoja óptica</h2>
+  <label class="campo">PIN de creador</label>
+  <input id="pin" type="password">
+  <button onclick="cargarLista()">Cargar lista de exámenes</button>
+  <label class="campo">Examen</label>
+  <select id="examen"></select>
+  <button onclick="mostrar()">Mostrar hoja</button>
+  <button onclick="window.print()">Imprimir / Guardar PDF</button>
+  <div id="mensaje"></div>
+</div>
+<div id="pagina"></div>
+
+<script>
+  const URL_API = 'https://script.google.com/macros/s/AKfycbyzwurBcWvUmHXyS70klQhuny8y-9dHyslQHJkeZP90ZfdZpMM8OkMfWz4yamMuymPN7Q/exec';
+  const LETRAS = ['A', 'B', 'C', 'D', 'E', 'F'];
+
+  function msg(t, error) {
+    const m = document.getElementById('mensaje');
+    m.textContent = t;
+    m.style.color = error ? 'red' : 'green';
+  }
+
+  function esc(t) {
+    return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function texto(x, y, t, size, peso, anchor, color) {
+    return '<text x="' + x + '" y="' + y + '" font-size="' + size + '" font-weight="' + (peso || 'normal') +
+           '" text-anchor="' + (anchor || 'start') + '" fill="' + (color || 'black') + '">' + esc(t) + '</text>';
+  }
+
+  async function cargarLista() {
+    const pin = document.getElementById('pin').value;
+    msg('Cargando...');
+    try {
+      const r = await fetch(URL_API + '?pin=' + encodeURIComponent(pin));
+      const d = await r.json();
+      if (!d.ok) { msg('ERROR: ' + d.error, true); return; }
+      const sel = document.getElementById('examen');
+      sel.innerHTML = '';
+      d.examenes.forEach(function (x) {
+        const o = document.createElement('option');
+        o.value = x.id;
+        o.textContent = x.nombre + ' (' + x.preguntas + ' preguntas)';
+        sel.appendChild(o);
+      });
+      msg('Exámenes cargados: ' + d.examenes.length);
+    } catch (err) {
+      msg('FALLÓ: ' + err.name + ' - ' + err.message, true);
+    }
+  }
+
+  async function mostrar() {
+    const pin = document.getElementById('pin').value;
+    const id = document.getElementById('examen').value;
+    if (!id) { msg('Primero carga la lista y elige un examen', true); return; }
+    msg('Generando...');
+    try {
+      const r = await fetch(URL_API + '?pin=' + encodeURIComponent(pin) + '&accion=obtener&id=' + encodeURIComponent(id));
+      const d = await r.json();
+      if (!d.ok) { msg('ERROR: ' + d.error, true); return; }
+      dibujar(d.nombre, d.id, d.alternativas);
+      msg('Hoja lista. Revisa la vista y luego imprime.');
+    } catch (err) {
+      msg('FALLÓ: ' + err.name + ' - ' + err.message, true);
+    }
+  }
+
+  function dibujar(nombre, id, alternativas) {
+    const L = HOJA.calcular(alternativas);
+    const nom = nombre.length > 38 ? nombre.slice(0, 38) + '…' : nombre;
+    let s = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 297" font-family="Arial, sans-serif">';
+    s += '<rect width="210" height="297" fill="white"/>';
+
+    L.marcas.forEach(function (m) {
+      s += '<rect x="' + (m.x - m.lado / 2) + '" y="' + (m.y - m.lado / 2) +
+           '" width="' + m.lado + '" height="' + m.lado + '" fill="black"/>';
+    });
+
+    s += texto(22, 28, 'HOJA DE RESPUESTAS', 5.5, 'bold');
+    s += texto(22, 37, nom, 4.2, 'bold');
+    s += texto(22, 44, 'Código del examen: ' + id, 3.2);
+
+    s += texto(22, 56, 'Apellidos y nombres:', 3.2, 'bold');
+    s += '<line x1="22" y1="66" x2="112" y2="66" stroke="black" stroke-width="0.3"/>';
+    s += texto(22, 76, 'Fecha:', 3.2, 'bold');
+    s += '<line x1="35" y1="76" x2="75" y2="76" stroke="black" stroke-width="0.3"/>';
+
+    s += texto(22, 84, 'Rellena TODO el círculo con lapicero negro', 2.8);
+    s += texto(22, 88, 'o azul oscuro. Una sola marca por pregunta.', 2.8);
+    s += texto(22, 92, 'No uses corrector ni borres con fuerza.', 2.8);
+
+    s += texto(L.DNI.x0 - 4, 26, 'DNI: escribe y marca cada dígito', 3.2, 'bold');
+    for (let c = 0; c < L.DNI.cols; c++) {
+      const cx = L.DNI.x0 + c * L.DNI.dx;
+      s += '<rect x="' + (cx - 3.5) + '" y="29" width="7" height="7" fill="white" stroke="black" stroke-width="0.3"/>';
+    }
+    L.dni.forEach(function (b) {
+      s += '<circle cx="' + b.x + '" cy="' + b.y + '" r="' + L.radio + '" fill="white" stroke="black" stroke-width="0.3"/>';
+      s += texto(b.x, b.y + 1, b.valor, 2.8, 'normal', 'middle', '#888');
+    });
+
+    L.preguntas.forEach(function (p) {
+      s += texto(p.xNum + 5.5, p.y + 1.1, p.numero, 3.2, 'bold', 'end');
+      p.burbujas.forEach(function (b) {
+        s += '<circle cx="' + b.x + '" cy="' + b.y + '" r="' + L.radio + '" fill="white" stroke="black" stroke-width="0.3"/>';
+        s += texto(b.x, b.y + 1, LETRAS[b.opcion], 2.8, 'normal', 'middle', '#888');
+      });
+    });
+
+    s += '</svg>';
+    document.getElementById('pagina').innerHTML = s;
+  }
+</script>
+</body>
+</html>
