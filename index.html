@@ -3,24 +3,40 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Prueba cámara</title>
+  <title>Prueba conexión</title>
 </head>
 <body style="font-family:sans-serif;padding:12px">
-  <h3>Prueba de cámara (GitHub Pages)</h3>
-  <button onclick="probar()" style="font-size:18px;padding:12px">Probar cámara</button>
-  <p id="estado">Aún no probado</p>
-  <video id="v" autoplay playsinline muted style="width:100%;margin-top:10px"></video>
+  <h3>Prueba de conexión con Apps Script</h3>
+  <button onclick="enviar()" style="font-size:18px;padding:12px">Enviar nota de prueba</button>
+  <button onclick="leer()" style="font-size:18px;padding:12px;margin-top:8px">Leer últimas notas</button>
+  <pre id="salida">Aún no probado</pre>
   <script>
-    async function probar() {
-      const e = document.getElementById('estado');
+    const URL_API = 'https://script.google.com/macros/s/AKfycbyzwurBcWvUmHXyS70klQhuny8y-9dHyslQHJkeZP90ZfdZpMM8OkMfWz4yamMuymPN7Q/exec';
+    const PIN = '1234';
+
+    async function enviar() {
+      const s = document.getElementById('salida');
+      s.textContent = 'Enviando...';
       try {
-        const s = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment' }
+        const r = await fetch(URL_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ pin: PIN, docente: 'Docente 1', valor: 15 })
         });
-        document.getElementById('v').srcObject = s;
-        e.textContent = 'FUNCIONA: la cámara abrió';
+        s.textContent = 'RESPUESTA: ' + await r.text();
       } catch (err) {
-        e.textContent = 'FALLÓ: ' + err.name + ' - ' + err.message;
+        s.textContent = 'FALLÓ: ' + err.name + ' - ' + err.message;
+      }
+    }
+
+    async function leer() {
+      const s = document.getElementById('salida');
+      s.textContent = 'Leyendo...';
+      try {
+        const r = await fetch(URL_API + '?pin=' + PIN);
+        s.textContent = 'RESPUESTA: ' + await r.text();
+      } catch (err) {
+        s.textContent = 'FALLÓ: ' + err.name + ' - ' + err.message;
       }
     }
   </script>
