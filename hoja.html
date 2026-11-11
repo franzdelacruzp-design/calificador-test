@@ -12,10 +12,10 @@
   button { font-size: 17px; padding: 12px; margin-top: 12px; }
   #mensaje { margin-top: 10px; font-weight: bold; }
   #pagina { width: 210mm; height: 296.5mm; overflow: hidden; background: white; margin: 0 auto; }
-  #pagina svg { display: block; width: 210mm; height: 297mm; }
-  @page { size: A4; margin: 0; }
+  #pagina svg { display: block; }
   @media print { .panel { display: none; } }
 </style>
+<style id="estiloPagina">@page { size: A4 portrait; margin: 0; }</style>
 <script src="layout.js"></script>
 </head>
 <body>
@@ -26,6 +26,11 @@
   <button onclick="cargarLista()">Cargar lista de exámenes</button>
   <label class="campo">Examen</label>
   <select id="examen"></select>
+  <label class="campo">Tamaño de impresión</label>
+  <select id="tam" onchange="redibujar()">
+    <option value="A4">A4 completa (1 hoja por A4)</option>
+    <option value="A5">Media hoja (2 por cada A4 horizontal)</option>
+  </select>
   <button onclick="mostrar()">Mostrar hoja</button>
   <button onclick="window.print()">Imprimir / Guardar PDF</button>
   <div id="mensaje"></div>
@@ -35,6 +40,8 @@
 <script>
   const URL_API = 'https://script.google.com/macros/s/AKfycbyzwurBcWvUmHXyS70klQhuny8y-9dHyslQHJkeZP90ZfdZpMM8OkMfWz4yamMuymPN7Q/exec';
   const LETRAS = ['A', 'B', 'C', 'D', 'E', 'F'];
+  const ESC_A5 = 0.68;
+  let ultimo = null;
 
   function msg(t, error) {
     const m = document.getElementById('mensaje');
@@ -81,18 +88,18 @@
       const r = await fetch(URL_API + '?pin=' + encodeURIComponent(pin) + '&accion=obtener&id=' + encodeURIComponent(id));
       const d = await r.json();
       if (!d.ok) { msg('ERROR: ' + d.error, true); return; }
-      dibujar(d.nombre, d.id, d.alternativas);
+      ultimo = { nombre: d.nombre, id: d.id, alternativas: d.alternativas };
+      redibujar();
       msg('Hoja lista. Revisa la vista y luego imprime.');
     } catch (err) {
       msg('FALLÓ: ' + err.name + ' - ' + err.message, true);
     }
   }
 
-  function dibujar(nombre, id, alternativas) {
+  function contenidoHoja(nombre, id, alternativas) {
     const L = HOJA.calcular(alternativas);
     const nom = nombre.length > 38 ? nombre.slice(0, 38) + '…' : nombre;
-    let s = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 297" font-family="Arial, sans-serif">';
-    s += '<rect width="210" height="297" fill="white"/>';
+    let s = '<rect width="210" height="297" fill="white"/>';
 
     L.marcas.forEach(function (m) {
       s += '<rect x="' + (m.x - m.lado / 2) + '" y="' + (m.y - m.lado / 2) +
@@ -129,9 +136,38 @@
         s += texto(b.x, b.y + 1, LETRAS[b.opcion], 2.8, 'normal', 'middle', '#888');
       });
     });
+    return s;
+  }
 
-    s += '</svg>';
-    document.getElementById('pagina').innerHTML = s;
+  function redibujar() {
+    if (!ultimo) return;
+    const tam = document.getElementById('tam').value;
+    const cont = contenidoHoja(ultimo.nombre, ultimo.id, ultimo.alternativas);
+    const pag = document.getElementById('pagina');
+    const estilo = document.getElementById('estiloPagina');
+    let s;
+
+    if (tam === 'A5') {
+      const tx1 = (148.5 - 210 * ESC_A5) / 2;
+      const tx2 = 148.5 + tx1;
+      const ty = (210 - 297 * ESC_A5) / 2;
+      pag.style.width = '297mm';
+      pag.style.height = '209.5mm';
+      estilo.textContent = '@page { size: A4 landscape; margin: 0; }';
+      s = '<svg xmlns="http://www.w3.org/2000/svg" width="297mm" height="210mm" viewBox="0 0 297 210" font-family="Arial, sans-serif">' +
+          '<rect width="297" height="210" fill="white"/>' +
+          '<g transform="translate(' + tx1 + ' ' + ty + ') scale(' + ESC_A5 + ')">' + cont + '</g>' +
+          '<g transform="translate(' + tx2 + ' ' + ty + ') scale(' + ESC_A5 + ')">' + cont + '</g>' +
+          '<line x1="148.5" y1="0" x2="148.5" y2="210" stroke="#bbb" stroke-width="0.2" stroke-dasharray="2 2"/>' +
+          '</svg>';
+    } else {
+      pag.style.width = '210mm';
+      pag.style.height = '296.5mm';
+      estilo.textContent = '@page { size: A4 portrait; margin: 0; }';
+      s = '<svg xmlns="http://www.w3.org/2000/svg" width="210mm" height="297mm" viewBox="0 0 210 297" font-family="Arial, sans-serif">' +
+          cont + '</svg>';
+    }
+    pag.innerHTML = s;
   }
 </script>
 </body>
