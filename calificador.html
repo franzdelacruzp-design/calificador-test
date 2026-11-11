@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lector de hojas</title>
+<style>
+  html, body { margin: 0; font-family: sans-serif; }
+  .panel { padding: 12px; max-width: 700px; margin: auto; }
+  .campo { display: block; margin-top: 10px; font-weight: bold; }
+  input, select { font-size: 16px; padding: 8px; width: 100%; box-sizing: border-box; }
+  button { font-size: 17px; padding: 12px; margin-top: 12px; }
+  #mensaje { margin-top: 10px; font-weight: bold; }
+  #visor { display: none; max-width: 700px; margin: auto; padding: 8px; }
+  #lienzo { width: 100%; height: auto; background: #000; display: block; }
+  .estado { padding: 8px; font-weight: bold; text-align: center; color: white; margin-bottom: 6px; border-radius: 6px; }
+  .estado.bueno { background: #2e7d32; }
+  .estado.medio { background: #757575; }
+  .estado.malo { background: #c62828; }
+  #dni { font-size: 28px; font-weight: bold; letter-spacing: 3px; margin: 10px 0 4px; }
+  #aviso { color: #c62828; font-weight: bold; }
+  #resumen { margin: 6px 0; }
+  .c { display: inline-block; padding: 3px 6px; margin: 2px; border-radius: 6px; font-size: 14px; background: #eee; }
+  .c.ok { background: #d6f5d6; }
+  .c.bl { background: #eee; color: #777; }
+  .c.do { background: #ffd6d6; }
+  .c.du { background: #ffe9c2; }
+  #dudas { white-space: pre-wrap; font-size: 13px; }
+</style>
+<script src="layout.js"></script>
+<script src="lector.js"></script>
+</head>
+<body>
+<div class="panel" id="panelConfig">
+  <h2>Lector de hojas (prueba)</h2>
+  <label class="campo">PIN de creador</label>
+  <input id="pin" type="password">
+  <button onclick="cargarLista()">Cargar lista de exámenes</button>
+  <label class="campo">Examen</label>
+  <select id="examen"></select>
+  <button onclick="iniciar()">Iniciar cámara</button>
+  <div id="mensaje"></div>
+</div>
+
+<div id="visor">
+  <div id="nombreExamen" style="font-weight:bold"></div>
+  <div id="estado" class="estado medio">Buscando la hoja…</div>
+  <canvas id="lienzo"></canvas>
+  <button id="btnCongelar" onclick="congelar()">Congelar lectura</button>
+  <div id="dni"></div>
+  <div id="aviso"></div>
+  <div id="resumen"></div>
+  <div id="rejilla"></div>
+  <h4>Respuestas dudosas o dobles</h4>
+  <div id="dudas"></div>
+</div>
+<video id="video" playsinline muted style="display:none"></video>
+
+<script>
+  const URL_API = 'https://script.google.com/macros/s/AKfycbyzwurBcWvUmHXyS70klQhuny8y-9dHyslQHJkeZP90ZfdZpMM8OkMfWz4yamMuymPN7Q/exec';
+  const LETRAS = ['A', 'B', 'C', 'D', 'E', 'F'];
+  const LADO_MAX = 1280;
+
+  let P = null;
+  let activo = false;
+  let congelado = false;
+  let historial = [];
+
+  const video = document.getElementById('video');
+  const lienzo = document.getElementById('lienzo');
+  const ctx = lienzo.getContext('2d', { willReadFrequently: true });
+
+  function $(id) { return document.getElementById(id); }
+
+  function msg(t, error) {
+    const m = $('mensaje');
+    m.textContent = t;
+    m.style.color = error ? 'red' : 'green';
+  }
+
+  async function cargarLista() {
+    const pin = $('pin').value;
+    msg('Cargando...');
+    try {
+      const r = await fetch(URL_API + '?pin=' + encodeURIComponent(pin));
+      const d = await r.json();
+      if (!d.ok) { msg('ERROR: ' + d.error, true); return; }
+      const sel = $('examen');
+      sel.innerHTML = '';
+      d.examenes.forEach(function (x) {
+        const o = document.createElement('option');
+        o.value = x.id;
+        o.textContent = x.nombre + ' (' + x.preguntas + ' preguntas)';
+        sel.appendChild(o);
+      });
+      msg('Exámenes cargados: ' + d.examenes.length);
+    } catch (err) {
+      msg('FALLÓ: ' + err.name + ' - ' + err.message, true);
+    }
+  }
+
+  async function iniciar() {
+    const pin = $('pin').value;
+    const id = $('examen').value;
+    if (!id) { msg('Primero carga la lista y elige un examen', true); return; }
+    msg('Cargando examen...');
+    try {
+      const r = await fetch(URL_API + '?pin=' + encodeURIComponent(pin) + '&accion=obtener&id=' + encodeURIComponent(id));
+      const d = await r.json();
+      if (!d.ok) { msg('ERROR: ' + d.error, true); return; }
+      P = LECTOR.preparar(HOJA, d.alternativas);
+      $('nombreExamen').textContent = d.nombre + ' (' + d.alternativas.length + ' preguntas)';
+    } catch (err) {
+      msg('FALLÓ: ' + err.name + ' - ' + err.message, true);
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false
+      });
+      video.srcObject = stream;
+      await video.play();
+    } catch (err) {
+      msg('No se pudo abrir la cámara: ' + err.name + ' - ' + err.message, true);
+      return;
+    }
+    $('panelConfig').style.display = 'none';
+    $('visor').style.display = 'block';
+    activo = true;
+    ciclo();
+  }
+
+  function congelar() {
+    congelado = !congelado;
+    $('btnCongelar').textContent = congelado ? 'Continuar' : 'Congelar lectura';
+  }
+
+  function ciclo() {
+    if (!activo) return;
+    if (!congelado && video.videoWidth) {
+      const k = LADO_MAX / Math.max(video.videoWidth, video.videoHeight);
+      const w = Math.round(video.videoWidth * k);
+      const h = Math.round(video.videoHeight * k);
+      if (lienzo.width !== w || lienzo.height !== h) { lienzo.width = w; lienzo.height = h; }
+      ctx.drawImage(video, 0, 0, w, h);
+      const img = ctx.getImageData(0, 0, w, h);
+      let r;
+      try {
+        r = LECTOR.leer(img.data, w, h, P);
+      } catch (err) {
+        r = { ok: false, motivo: 'Error de lectura: ' + err.message };
+      }
+      mostrar(r);
+    }
+    setTimeout(ciclo, 150);
+  }
+
+  function dibujarCuadro(q, color) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    q.forEach(function (p, i) { if (i) ctx.lineTo(p[0], p[1]); else ctx.moveTo(p[0], p[1]); });
+    ctx.closePath();
+    ctx.stroke();
+  }
+
+  function dibujarMarcas(r) {
+    const rad = Math.max(3, P.radio * r.pxmm);
+    function circ(ix, color) {
+      const b = P.bub[ix];
+      const p = LECTOR.proyectar(r.H, b.x, b.y);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], rad, 0, 6.2832);
+      ctx.stroke();
+    }
+    function colorear(idxs, estado) {
+      idxs.forEach(function (ix) {
+        const f = r.f[ix];
+        if (f >= LECTOR.T_HI) circ(ix, estado === 'doble' ? '#ff1744' : '#00e676');
+        else if (f >= LECTOR.T_LO) circ(ix, '#ff9100');
+      });
+    }
+    P.dniIdx.forEach(function (idxs, c) { colorear(idxs, r.dni.estados[c]); });
+    P.pregIdx.forEach(function (idxs, k) { colorear(idxs, r.respuestas[k].estado); });
+  }
+
+  function pintarResultados(r) {
+    const dni = $('dni');
+    dni.textContent = 'DNI: ' + r.dni.texto;
+    dni.style.color = r.dni.completo ? '#2e7d32' : '#c62828';
+    $('aviso').textContent = (r.dni.completo ? '' : 'DNI incompleto o con doble marca: revisar. ') +
+                             (r.contraste < 0.5 ? 'Poca luz o contraste bajo.' : '');
+    const s = r.resumen;
+    $('resumen').textContent = 'Con respuesta: ' + s.ok + ' · En blanco: ' + s.blanco +
+                               ' · Dobles: ' + s.doble + ' · Dudosas: ' + s.dudosa +
+                               ' · Escala: ' + r.pxmm.toFixed(1) + ' px/mm';
+    let html = '';
+    let dudas = '';
+    r.respuestas.forEach(function (x) {
+      let t, cls;
+      if (x.estado === 'ok') { t = LETRAS[x.valor]; cls = 'ok'; }
+      else if (x.estado === 'blanco') { t = '—'; cls = 'bl'; }
+      else if (x.estado === 'doble') { t = '2×'; cls = 'do'; }
+      else { t = LETRAS[x.valor] + '?'; cls = 'du'; }
+      html += '<span class="c ' + cls + '"><b>' + x.n + '</b> ' + t + '</span>';
+      if (x.estado === 'doble' || x.estado === 'dudosa') {
+        dudas += 'P' + x.n + ' ' + x.estado + ': ' + x.f.map(function (v, j) { return LETRAS[j] + ' ' + v.toFixed(2); }).join(' · ') + '\n';
+      }
+    });
+    $('rejilla').innerHTML = html;
+    $('dudas').textContent = dudas || 'Ninguna';
+  }
+
+  function mostrar(r) {
+    const est = $('estado');
+    if (r.quad) dibujarCuadro(r.quad, r.ok ? '#00e676' : '#ff9100');
+    if (!r.ok) {
+      historial = [];
+      est.textContent = r.motivo;
+      est.className = 'estado malo';
+      return;
+    }
+    historial.push(r.firma);
+    if (historial.length > 3) historial.shift();
+    const estable = historial.length === 3 && historial.every(function (f) { return f === historial[0]; });
+    est.textContent = estable ? 'Lectura estable ✔' : 'Midiendo… mantén quieta la cámara';
+    est.className = 'estado ' + (estable ? 'bueno' : 'medio');
+    dibujarMarcas(r);
+    pintarResultados(r);
+  }
+</script>
+</body>
+</html>
