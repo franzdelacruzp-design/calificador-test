@@ -113,14 +113,45 @@
     if (!id) { msg('Primero carga la lista y elige un examen', true); return; }
     msg('Cargando examen...');
     try {
-      const r = await fetch(URL_API + '?pin=' + encodeURIComponent(pin) + '&accion=obtener&id=' + encodeURIComponent(id));
-      const d = await r.json();
-      if (!d.ok) { msg('ERROR: ' + d.error, true); return; }
-      P = LECTOR.preparar(HOJA, d.alternativas);
-      $('nombreExamen').textContent = d.nombre + ' (' + d.alternativas.length + ' preguntas)';
+      // Pedimos las capacidades avanzadas de la cámara
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { 
+          facingMode: { exact: 'environment' }, // Obliga a usar la cámara trasera principal
+          width: { ideal: 1920 }, 
+          height: { ideal: 1080 },
+          advanced: [{ focusMode: "continuous" }] // Fuerza el autoenfoque avanzado
+        },
+        audio: false
+      });
+      video.srcObject = stream;
+      await video.play();
+
+      // TRUCO: Al tocar la pantalla, intentamos forzar el autoenfoque del celular
+      lienzo.addEventListener('click', async () => {
+        const track = stream.getVideoTracks()[0];
+        const caps = track.getCapabilities();
+        if (caps.focusMode) {
+          try {
+            await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
+            msg('Reenfocando...', false);
+            setTimeout(() => msg('', false), 1000);
+          } catch(e) {}
+        }
+      });
+
     } catch (err) {
-      msg('FALLÓ: ' + err.name + ' - ' + err.message, true);
-      return;
+      // Si el celular no soporta 'exact: environment', hacemos un respaldo suave
+      try {
+        const stream2 = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 1920 } },
+          audio: false
+        });
+        video.srcObject = stream2;
+        await video.play();
+      } catch(err2) {
+        msg('No se pudo abrir la cámara: ' + err2.message, true);
+        return;
+      }
     }
 
     try {
