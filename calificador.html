@@ -5,28 +5,35 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lector de hojas</title>
 <style>
-  html, body { margin: 0; font-family: sans-serif; }
-  .panel { padding: 12px; max-width: 700px; margin: auto; }
+  html, body { margin: 0; font-family: sans-serif; background: #f5f5f5; }
+  .panel { padding: 12px; max-width: 700px; margin: auto; background: white; }
   .campo { display: block; margin-top: 10px; font-weight: bold; }
   input, select { font-size: 16px; padding: 8px; width: 100%; box-sizing: border-box; }
   button { font-size: 17px; padding: 12px; margin-top: 12px; width: 100%; background: #1976d2; color: white; border: none; border-radius: 4px; cursor: pointer;}
   button:active { background: #115293; }
   #mensaje { margin-top: 10px; font-weight: bold; }
-  #visor { display: none; max-width: 700px; margin: auto; padding: 8px; }
-  #lienzo { width: 100%; height: auto; background: #000; display: block; }
+  
+  #visor { display: none; max-width: 700px; margin: auto; padding: 8px; background: white; }
+  
+  /* AQUÍ ESTÁ EL TRUCO PARA ACHICAR LA CÁMARA: max-height 45vh */
+  #lienzo { width: 100%; max-height: 45vh; object-fit: contain; background: #000; display: block; border-radius: 8px; margin-bottom: 10px; }
+  
   .estado { padding: 8px; font-weight: bold; text-align: center; color: white; margin-bottom: 6px; border-radius: 6px; }
   .estado.bueno { background: #2e7d32; }
   .estado.medio { background: #757575; }
   .estado.malo { background: #c62828; }
-  #dni { font-size: 28px; font-weight: bold; letter-spacing: 3px; margin: 10px 0 4px; }
-  #aviso { color: #c62828; font-weight: bold; }
-  #resumen { margin: 6px 0; }
+  #dni { font-size: 24px; font-weight: bold; letter-spacing: 3px; margin: 5px 0; }
+  #aviso { color: #c62828; font-weight: bold; font-size: 14px; }
+  #resumen { margin: 6px 0; font-size: 14px; }
   .c { display: inline-block; padding: 3px 6px; margin: 2px; border-radius: 6px; font-size: 14px; background: #eee; }
   .c.ok { background: #d6f5d6; }
   .c.bl { background: #eee; color: #777; }
   .c.do { background: #ffd6d6; }
   .c.du { background: #ffe9c2; }
   #dudas { white-space: pre-wrap; font-size: 13px; }
+  
+  .controles-camara { display: flex; gap: 10px; }
+  .controles-camara button { margin-top: 0; }
 </style>
 <script src="layout.js"></script>
 <script src="lector.js"></script>
@@ -52,16 +59,23 @@
 </div>
 
 <div id="visor">
-  <div id="nombreExamen" style="font-weight:bold"></div>
+  <div id="nombreExamen" style="font-weight:bold; font-size: 14px; margin-bottom: 5px;"></div>
   <div id="estado" class="estado medio">Buscando la hoja…</div>
+  
+  <!-- Lienzo donde se dibuja la cámara achicada -->
   <canvas id="lienzo"></canvas>
-  <button id="btnCongelar" style="background:#ff9800" onclick="congelar()">Congelar / Continuar</button>
-  <button onclick="recargar()" style="background:#757575; margin-top:5px;">Cambiar Cámara</button>
+  
+  <div class="controles-camara">
+    <button id="btnCongelar" style="background:#ff9800" onclick="congelar()">Congelar</button>
+    <button onclick="recargar()" style="background:#757575;">Salir</button>
+  </div>
+  
+  <!-- Resultados visibles sin hacer scroll excesivo -->
   <div id="dni"></div>
   <div id="aviso"></div>
   <div id="resumen"></div>
   <div id="rejilla"></div>
-  <h4>Respuestas dudosas o dobles</h4>
+  <h4 style="margin: 10px 0 5px 0;">Revisiones:</h4>
   <div id="dudas"></div>
 </div>
 
@@ -95,10 +109,8 @@
     procesando = false; 
   };
 
-  // Novedad: Función para listar todas las cámaras disponibles en tu celular
   async function cargarCamaras() {
     try {
-      // Pedimos permiso a la cámara primero para que el celular nos dé los nombres reales de los lentes
       await navigator.mediaDevices.getUserMedia({ video: true });
       const dispositivos = await navigator.mediaDevices.enumerateDevices();
       const camaras = dispositivos.filter(d => d.kind === 'videoinput');
@@ -108,7 +120,6 @@
       camaras.forEach((c, i) => {
         const opt = document.createElement('option');
         opt.value = c.deviceId;
-        // Mostrará nombres como "Cámara trasera 0", "Cámara frontal", etc.
         opt.textContent = c.label || `Lente ${i + 1}`; 
         sel.appendChild(opt);
       });
@@ -117,7 +128,6 @@
     }
   }
 
-  // Cargamos las cámaras apenas entras a la página
   window.addEventListener('load', cargarCamaras);
 
   async function cargarLista() {
@@ -160,7 +170,6 @@
     }
 
     try {
-      // Usamos exactamente el lente que elegiste en el menú desplegable
       const constraints = {
         video: camId ? { deviceId: { exact: camId }, width: { ideal: 1920 } } : { facingMode: 'environment', width: { ideal: 1920 } },
         audio: false
@@ -181,10 +190,12 @@
 
   function congelar() {
     congelado = !congelado;
+    $('btnCongelar').textContent = congelado ? 'Continuar' : 'Congelar';
+    $('btnCongelar').style.background = congelado ? '#2196F3' : '#ff9800';
   }
   
   function recargar() {
-    location.reload(); // Botón simple para volver al menú y elegir otra cámara
+    location.reload(); 
   }
 
   function ciclo() {
@@ -210,33 +221,47 @@
     requestAnimationFrame(ciclo); 
   }
 
-  function dibujarCuadro(q, color) {
+  function dibujarCuadro(q, color, detectado) {
     ctx.strokeStyle = color;
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 4; // Borde más grueso
     ctx.beginPath();
     q.forEach(function (p, i) { if (i) ctx.lineTo(p[0], p[1]); else ctx.moveTo(p[0], p[1]); });
     ctx.closePath();
     ctx.stroke();
+
+    // Líneas de guía cruzadas tipo escáner si detectó las esquinas
+    if (detectado) {
+      ctx.strokeStyle = 'rgba(0, 230, 118, 0.4)'; // Verde semitransparente
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(q[0][0], q[0][1]); ctx.lineTo(q[2][0], q[2][1]); // Diagonal 1
+      ctx.moveTo(q[1][0], q[1][1]); ctx.lineTo(q[3][0], q[3][1]); // Diagonal 2
+      ctx.stroke();
+    }
   }
 
   function dibujarMarcas(r) {
-    const rad = Math.max(3, P.radio * r.pxmm);
+    // Aumentamos ligeramente el radio visual para que encierre bien la burbuja
+    const rad = Math.max(5, (P.radio * r.pxmm) * 1.3); 
+    
     function circ(ix, color) {
       const b = P.bub[ix];
       const p = LECTOR.proyectar(r.H, b.x, b.y);
       ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 3; // Línea gruesa para los círculos de respuesta
       ctx.beginPath();
       ctx.arc(p[0], p[1], rad, 0, 6.2832);
       ctx.stroke();
     }
+    
     function colorear(idxs, estado) {
       idxs.forEach(function (ix) {
         const f = r.f[ix];
-        if (f >= LECTOR.T_HI) circ(ix, estado === 'doble' ? '#ff1744' : '#00e676');
-        else if (f >= LECTOR.T_LO) circ(ix, '#ff9100');
+        if (f >= LECTOR.T_HI) circ(ix, estado === 'doble' ? '#ff1744' : '#00e676'); // Rojo o verde
+        else if (f >= LECTOR.T_LO) circ(ix, '#ff9100'); // Naranja para dudoso
       });
     }
+    
     P.dniIdx.forEach(function (idxs, c) { colorear(idxs, r.dni.estados[c]); });
     P.pregIdx.forEach(function (idxs, k) { colorear(idxs, r.respuestas[k].estado); });
   }
@@ -248,8 +273,8 @@
     $('aviso').textContent = (r.dni.completo ? '' : 'DNI incompleto/doble. ') + 
                              (r.contraste < 0.4 ? 'Poca luz.' : '');
     const s = r.resumen;
-    $('resumen').textContent = 'Respondidas: ' + s.ok + ' · Blanco: ' + s.blanco + 
-                               ' · Dobles: ' + s.doble + ' · Dudosas: ' + s.dudosa;
+    $('resumen').textContent = 'Respuestas: ' + s.ok + ' · Blanco: ' + s.blanco + 
+                               ' · Dobles: ' + s.doble;
     let html = '';
     let dudas = '';
     r.respuestas.forEach(function (x) {
@@ -269,7 +294,9 @@
 
   function mostrar(r) {
     const est = $('estado');
-    if (r.quad) dibujarCuadro(r.quad, r.ok ? '#00e676' : '#ff9100');
+    // Le pasamos r.ok para dibujar o no las cruces guía
+    if (r.quad) dibujarCuadro(r.quad, r.ok ? '#00e676' : '#ff9100', r.ok);
+    
     if (!r.ok) {
       historial = [];
       est.textContent = r.motivo;
