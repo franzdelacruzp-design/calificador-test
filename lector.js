@@ -1,20 +1,17 @@
 (function (root) {
   'use strict';
-
   // ---- Parámetros ajustables ----
-  var T_HI = 0.40;          // oscuridad relativa: marca firme
-  var T_LO = 0.16;          // oscuridad relativa: marca débil (dudosa)
-  var PXMM_MIN = 1.6;       // resolución mínima (píxeles por mm)
-  var RATIO_ESPERADO = 273 / 186;
-
-  // Puntos de muestreo dentro de cada círculo (mm respecto al centro), radio ~1.7 mm
+  var T_HI = 0.35;          // Reducido a 0.35 para ser más tolerante con lápices/lapiceros claros
+  var T_LO = 0.15;          // Marca débil (dudosa)
+  var PXMM_MIN = 1.6;       
+  var RATIO_ESPERADO = 273 / 186;  
   var OFFS = (function () {
     var a = [];
     for (var i = -2; i <= 2; i++) for (var j = -2; j <= 2; j++) a.push([i * 0.6, j * 0.6]);
     return a;
   })();
 
-  // ---- Preparación del examen (una sola vez) ----
+  // ---- Preparación del examen ----
   function preparar(HOJA, alternativas) {
     var L = HOJA.calcular(alternativas);
     var bub = [];
@@ -51,7 +48,6 @@
     }
     return g;
   }
-
   function binarizar(g, w, h) {
     var W = w + 1;
     var I = new Uint32Array(W * (h + 1));
@@ -75,7 +71,6 @@
     }
     return bin;
   }
-
   function componentes(bin, w, h) {
     var n = w * h;
     var visto = new Uint8Array(n);
@@ -107,7 +102,7 @@
     return comps;
   }
 
-  // ---- Búsqueda de las 4 marcas ----
+  // ---- Búsqueda de las 4 marcas (Con tolerancia mejorada) ----
   function evaluar(q) {
     var mx = (q[0].cx + q[1].cx + q[2].cx + q[3].cx) / 4;
     var my = (q[0].cy + q[1].cy + q[2].cy + q[3].cy) / 4;
@@ -116,8 +111,7 @@
     });
     var iMax = 0;
     for (var i = 1; i < 4; i++) if (o[i].area > o[iMax].area) iMax = i;
-    var p = [o[iMax], o[(iMax + 1) % 4], o[(iMax + 2) % 4], o[(iMax + 3) % 4]];  // TL, TR, BR, BL
-
+    var p = [o[iMax], o[(iMax + 1) % 4], o[(iMax + 2) % 4], o[(iMax + 3) % 4]]; 
     var signo = 0;
     for (i = 0; i < 4; i++) {
       var a = p[i], b = p[(i + 1) % 4], c = p[(i + 2) % 4];
@@ -128,15 +122,16 @@
     }
     var d = function (u, v) { return Math.hypot(u.cx - v.cx, u.cy - v.cy); };
     var top = d(p[0], p[1]), right = d(p[1], p[2]), bottom = d(p[2], p[3]), left = d(p[3], p[0]);
-    if (top / bottom < 0.55 || top / bottom > 1.8 || left / right < 0.55 || left / right > 1.8) return null;
+    // Tolerancia relaja de 0.55/1.8 a 0.45/2.2 para aceptar perspectiva de la cámara
+    if (top / bottom < 0.45 || top / bottom > 2.2 || left / right < 0.45 || left / right > 2.2) return null;
     var errRatio = Math.abs(Math.log(((left + right) / (top + bottom)) / RATIO_ESPERADO));
-    if (errRatio > 0.3) return null;
+    if (errRatio > 0.4) return null; // Tolerancia subida a 0.4
     var otros = (p[1].area + p[2].area + p[3].area) / 3;
     var rel = p[0].area / otros;
-    if (rel < 1.25 || rel > 4.5) return null;
+    if (rel < 1.0 || rel > 5.5) return null; // Tolerancia subida
     var mn = Math.min(p[1].area, p[2].area, p[3].area);
     var mxa = Math.max(p[1].area, p[2].area, p[3].area);
-    if (mxa / mn > 2.5) return null;
+    if (mxa / mn > 3.0) return null; // Tolerancia subida
     var score = errRatio + 0.3 * Math.abs(Math.log(rel / 2.25)) + 0.2 * Math.log(mxa / mn);
     return { p: p, score: score, suma: p[0].area + p[1].area + p[2].area + p[3].area, lados: [top, right, bottom, left] };
   }
@@ -160,18 +155,18 @@
         proyectar(H, mm[0] - l, mm[1] - l), proyectar(H, mm[0] + l, mm[1] - l),
         proyectar(H, mm[0] + l, mm[1] + l), proyectar(H, mm[0] - l, mm[1] + l)]);
       var ratio = r.p[i].area / esp;
-      if (ratio < 0.65 || ratio > 1.5) return false;
+      if (ratio < 0.5 || ratio > 2.0) return false; // Tolerancia ampliada de 0.65 a 0.5
     }
     return true;
   }
 
   function buscarMarcas(comps, w, h, P) {
-    var maxA = 0.04 * w * h, minA = 60;
+    var maxA = 0.04 * w * h, minA = 40; // minA bajado a 40 por menor resolución
     var c = comps.filter(function (k) {
       var bw = k.maxx - k.minx + 1, bh = k.maxy - k.miny + 1;
       var asp = bw / bh;
-      return k.area >= minA && k.area <= maxA && asp > 0.55 && asp < 1.8 && k.area / (bw * bh) > 0.45 &&
-             k.iso > 0.6 && k.minx > 0 && k.miny > 0 && k.maxx < w - 1 && k.maxy < h - 1;
+      return k.area >= minA && k.area <= maxA && asp > 0.45 && asp < 2.2 && k.area / (bw * bh) > 0.45 &&
+             k.iso > 0.5 && k.minx > 0 && k.miny > 0 && k.maxx < w - 1 && k.maxy < h - 1;
     });
     c.sort(function (a, b) { return b.area - a.area; });
     c = c.slice(0, 9);
@@ -242,14 +237,13 @@
     var comps = componentes(bin, w, h);
     var q = buscarMarcas(comps, w, h, P);
     if (!q) return { ok: false, motivo: 'No veo las 4 marcas de las esquinas' };
-
     var dst = q.p.map(function (k) { return [k.cx, k.cy]; });
     var H = homografia(P.marcasMM, dst);
     if (!H) return { ok: false, motivo: 'No se pudo calcular la posición de la hoja' };
     var pxmm = (q.lados[0] / 186 + q.lados[2] / 186 + q.lados[1] / 273 + q.lados[3] / 273) / 4;
     var base = { H: H, quad: dst, pxmm: pxmm };
     if (pxmm < PXMM_MIN) return Object.assign({ ok: false, motivo: 'Acerca más la cámara a la hoja' }, base);
-
+    
     var n = P.bub.length;
     var m = new Float64Array(n);
     for (var i = 0; i < n; i++) {
@@ -262,7 +256,6 @@
       }
       m[i] = s / OFFS.length;
     }
-
     var f = new Float64Array(n);
     var Emed = [];
     for (i = 0; i < n; i++) {
@@ -282,7 +275,6 @@
       f[i] = Math.max(0, (refMax - m[i]) / Math.max(refMax, 1));
     }
 
-    // contraste: interior de las marcas negras contra el papel
     var sm = 0, cm = 0;
     P.marcasMM.forEach(function (mk) {
       [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (d) {
@@ -293,9 +285,8 @@
     });
     Emed.sort(function (a, b) { return a - b; });
     var papel = Emed[Math.floor(Emed.length / 2)];
-    var contraste = cm ? 1 - (sm / cm) / papel : 0;
+    var contraste = cm ? (1 - (sm / cm) / papel) : 0;
 
-    // DNI
     var dig = '', dniOk = true;
     var dniEst = [];
     for (var c = 0; c < P.dniIdx.length; c++) {
@@ -307,16 +298,16 @@
       else { dig += '?'; dniOk = false; }
     }
 
-    // Preguntas
     var resp = P.pregIdx.map(function (idxs, k) {
       var fs2 = idxs.map(function (ix) { return f[ix]; });
       var r2 = decidir(fs2);
       return { n: k + 1, estado: r2.estado, valor: r2.valor, f: Array.prototype.map.call(fs2, function (x) { return Math.round(x * 100) / 100; }) };
     });
+
     var res = { ok: 0, blanco: 0, doble: 0, dudosa: 0 };
     resp.forEach(function (r3) { res[r3.estado]++; });
     var firma = dig + '|' + resp.map(function (r4) { return r4.estado[0] + (r4.valor === null ? '-' : r4.valor); }).join('');
-
+    
     return Object.assign({
       ok: true, dni: { texto: dig, completo: dniOk, estados: dniEst },
       respuestas: resp, resumen: res, contraste: contraste, firma: firma, f: f
@@ -324,6 +315,22 @@
   }
 
   var api = { preparar: preparar, leer: leer, proyectar: proyectar, T_HI: T_HI, T_LO: T_LO };
+  
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.LECTOR = api;
+
+  // ---- INTEGRACIÓN WEB WORKER ----
+  if (typeof document === 'undefined' && typeof self !== 'undefined' && self.addEventListener) {
+    self.addEventListener('message', function(e) {
+      var d = e.data;
+      if (d.accion === 'leer') {
+        try {
+          var r = api.leer(d.rgba, d.w, d.h, d.P);
+          self.postMessage({ r: r });
+        } catch(err) {
+          self.postMessage({ r: { ok: false, motivo: 'Error interno: ' + err.message } });
+        }
+      }
+    });
+  }
 })(typeof self !== 'undefined' ? self : this);
