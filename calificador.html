@@ -9,7 +9,8 @@
   .panel { padding: 12px; max-width: 700px; margin: auto; }
   .campo { display: block; margin-top: 10px; font-weight: bold; }
   input, select { font-size: 16px; padding: 8px; width: 100%; box-sizing: border-box; }
-  button { font-size: 17px; padding: 12px; margin-top: 12px; }
+  button { font-size: 17px; padding: 12px; margin-top: 12px; width: 100%; background: #1976d2; color: white; border: none; border-radius: 4px; cursor: pointer;}
+  button:active { background: #115293; }
   #mensaje { margin-top: 10px; font-weight: bold; }
   #visor { display: none; max-width: 700px; margin: auto; padding: 8px; }
   #lienzo { width: 100%; height: auto; background: #000; display: block; }
@@ -32,13 +33,21 @@
 </head>
 <body>
 <div class="panel" id="panelConfig">
-  <h2>Lector de hojas (Sin Lag)</h2>
+  <h2>Lector de Hojas</h2>
+  
   <label class="campo">PIN de creador</label>
   <input id="pin" type="password">
-  <button onclick="cargarLista()">Cargar lista de exámenes</button>
+  <button onclick="cargarLista()">1. Cargar lista de exámenes</button>
+  
   <label class="campo">Examen</label>
   <select id="examen"></select>
-  <button onclick="iniciar()">Iniciar cámara</button>
+
+  <label class="campo">Cámara del celular</label>
+  <select id="listaCamaras">
+    <option value="">Cargando cámaras...</option>
+  </select>
+
+  <button onclick="iniciar()">2. Iniciar cámara</button>
   <div id="mensaje"></div>
 </div>
 
@@ -46,7 +55,8 @@
   <div id="nombreExamen" style="font-weight:bold"></div>
   <div id="estado" class="estado medio">Buscando la hoja…</div>
   <canvas id="lienzo"></canvas>
-  <button id="btnCongelar" onclick="congelar()">Congelar lectura</button>
+  <button id="btnCongelar" style="background:#ff9800" onclick="congelar()">Congelar / Continuar</button>
+  <button onclick="recargar()" style="background:#757575; margin-top:5px;">Cambiar Cámara</button>
   <div id="dni"></div>
   <div id="aviso"></div>
   <div id="resumen"></div>
@@ -58,15 +68,15 @@
 <video id="video" playsinline muted style="display:none"></video>
 
 <script>
-  const URL_API = 'https://script.google.com/macros/s/AKfycbyzwurBcWvUmHXyS70klQhuny8y-9dHyslQHJkeZP90ZfdZpMM8OkMfWz4yamMuymPN7Q/exec'; // <-- NO OLVIDES PONER TU URL
+  const URL_API = 'https://script.google.com/macros/s/AKfycbyzwurBcWvUmHXyS70klQhuny8y-9dHyslQHJkeZP90ZfdZpMM8OkMfWz4yamMuymPN7Q/exec';
   const LETRAS = ['A', 'B', 'C', 'D', 'E', 'F'];
-  const LADO_MAX = 800; // Reducido para acelerar el escaneo sin perder precisión
+  const LADO_MAX = 800; 
 
   let P = null;
   let activo = false;
   let congelado = false;
   let historial = [];
-  let worker = new Worker('lector.js'); // Instanciamos el Web Worker
+  let worker = new Worker('lector.js'); 
   let procesando = false;
 
   const video = document.getElementById('video');
@@ -80,11 +90,35 @@
     m.style.color = error ? 'red' : 'green';
   }
 
-  // Cuando el worker termina de pensar, nos manda los resultados
   worker.onmessage = function(e) {
     mostrar(e.data.r);
     procesando = false; 
   };
+
+  // Novedad: Función para listar todas las cámaras disponibles en tu celular
+  async function cargarCamaras() {
+    try {
+      // Pedimos permiso a la cámara primero para que el celular nos dé los nombres reales de los lentes
+      await navigator.mediaDevices.getUserMedia({ video: true });
+      const dispositivos = await navigator.mediaDevices.enumerateDevices();
+      const camaras = dispositivos.filter(d => d.kind === 'videoinput');
+      
+      const sel = $('listaCamaras');
+      sel.innerHTML = '';
+      camaras.forEach((c, i) => {
+        const opt = document.createElement('option');
+        opt.value = c.deviceId;
+        // Mostrará nombres como "Cámara trasera 0", "Cámara frontal", etc.
+        opt.textContent = c.label || `Lente ${i + 1}`; 
+        sel.appendChild(opt);
+      });
+    } catch (err) {
+      $('listaCamaras').innerHTML = '<option value="">Permite la cámara para ver la lista</option>';
+    }
+  }
+
+  // Cargamos las cámaras apenas entras a la página
+  window.addEventListener('load', cargarCamaras);
 
   async function cargarLista() {
     const pin = $('pin').value;
@@ -110,76 +144,47 @@
   async function iniciar() {
     const pin = $('pin').value;
     const id = $('examen').value;
+    const camId = $('listaCamaras').value;
+
     if (!id) { msg('Primero carga la lista y elige un examen', true); return; }
     msg('Cargando examen...');
     try {
-      // Pedimos las capacidades avanzadas de la cámara
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { 
-          facingMode: { exact: 'environment' }, // Obliga a usar la cámara trasera principal
-          width: { ideal: 1920 }, 
-          height: { ideal: 1080 },
-          advanced: [{ focusMode: "continuous" }] // Fuerza el autoenfoque avanzado
-        },
-        audio: false
-      });
-      video.srcObject = stream;
-      await video.play();
-
-      // TRUCO: Al tocar la pantalla, intentamos forzar el autoenfoque del celular
-      lienzo.addEventListener('click', async () => {
-        const track = stream.getVideoTracks()[0];
-        const caps = track.getCapabilities();
-        if (caps.focusMode) {
-          try {
-            await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
-            msg('Reenfocando...', false);
-            setTimeout(() => msg('', false), 1000);
-          } catch(e) {}
-        }
-      });
-
+      const r = await fetch(URL_API + '?pin=' + encodeURIComponent(pin) + '&accion=obtener&id=' + encodeURIComponent(id));
+      const d = await r.json();
+      if (!d.ok) { msg('ERROR: ' + d.error, true); return; }
+      P = LECTOR.preparar(HOJA, d.alternativas);
+      $('nombreExamen').textContent = d.nombre + ' (' + d.alternativas.length + ' preguntas)';
     } catch (err) {
-      // Si el celular no soporta 'exact: environment', hacemos un respaldo suave
-      try {
-        const stream2 = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 1920 } },
-          audio: false
-        });
-        video.srcObject = stream2;
-        await video.play();
-      } catch(err2) {
-        msg('No se pudo abrir la cámara: ' + err2.message, true);
-        return;
-      }
+      msg('FALLÓ: ' + err.name + ' - ' + err.message, true);
+      return;
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { 
-          facingMode: { ideal: 'environment' }, 
-          width: { ideal: 1920 }, 
-          height: { ideal: 1080 },
-          focusMode: { ideal: "continuous" } // Forzamos al celular a enfocar contínuamente
-        },
+      // Usamos exactamente el lente que elegiste en el menú desplegable
+      const constraints = {
+        video: camId ? { deviceId: { exact: camId }, width: { ideal: 1920 } } : { facingMode: 'environment', width: { ideal: 1920 } },
         audio: false
-      });
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       video.srcObject = stream;
       await video.play();
     } catch (err) {
-      msg('No se pudo abrir la cámara: ' + err.name + ' - ' + err.message, true);
+      msg('No se pudo abrir la cámara: ' + err.message, true);
       return;
     }
 
     $('panelConfig').style.display = 'none';
     $('visor').style.display = 'block';
     activo = true;
-    ciclo(); // Iniciamos el bucle a 60fps
+    ciclo(); 
   }
 
   function congelar() {
     congelado = !congelado;
-    $('btnCongelar').textContent = congelado ? 'Continuar' : 'Congelar lectura';
+  }
+  
+  function recargar() {
+    location.reload(); // Botón simple para volver al menú y elegir otra cámara
   }
 
   function ciclo() {
@@ -194,18 +199,14 @@
         lienzo.width = w; lienzo.height = h; 
       }
       
-      // Dibujamos el video en el lienzo (esto ocurre a 60 fps super fluido)
       ctx.drawImage(video, 0, 0, w, h);
       
-      // Si el worker está libre, le mandamos una copia de este fotograma para analizar
       if (!procesando) {
         procesando = true;
         const img = ctx.getImageData(0, 0, w, h);
-        // Usamos buffers transferibles para que la memoria se mueva al instante (0 lag)
         worker.postMessage({ accion: 'leer', rgba: img.data, w: w, h: h, P: P }, [img.data.buffer]);
       }
     }
-    // requestAnimationFrame es el método correcto para no trabar el navegador
     requestAnimationFrame(ciclo); 
   }
 
@@ -244,12 +245,11 @@
     const dni = $('dni');
     dni.textContent = 'DNI: ' + r.dni.texto;
     dni.style.color = r.dni.completo ? '#2e7d32' : '#c62828';
-    $('aviso').textContent = (r.dni.completo ? '' : 'DNI incompleto o con doble marca: revisar. ') + 
-                             (r.contraste < 0.4 ? 'Poca luz o contraste bajo.' : '');
+    $('aviso').textContent = (r.dni.completo ? '' : 'DNI incompleto/doble. ') + 
+                             (r.contraste < 0.4 ? 'Poca luz.' : '');
     const s = r.resumen;
-    $('resumen').textContent = 'Con respuesta: ' + s.ok + ' · En blanco: ' + s.blanco + 
-                               ' · Dobles: ' + s.doble + ' · Dudosas: ' + s.dudosa + 
-                               ' · Escala: ' + r.pxmm.toFixed(1) + ' px/mm';
+    $('resumen').textContent = 'Respondidas: ' + s.ok + ' · Blanco: ' + s.blanco + 
+                               ' · Dobles: ' + s.doble + ' · Dudosas: ' + s.dudosa;
     let html = '';
     let dudas = '';
     r.respuestas.forEach(function (x) {
